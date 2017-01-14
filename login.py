@@ -24,9 +24,13 @@ if __name__ == "__main__":
                          help="Domain (specified by the VPN gateway)")
     parser.add_argument("--noverify", default=False, action="store_true",
                         help="Do not check TLS certificates")
+    parser.add_argument("--debug", default=False, action="store_true",
+                        help="Enable debug printouts")
     args = parser.parse_args()
     server = args.server[0]
     
+    if args.debug:
+        log.setLevel('DEBUG')
     # Using a session for all HTTPS requests in order to persist cookies   
     s = requests.Session()
     s.verify = not args.noverify
