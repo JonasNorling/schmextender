@@ -17,37 +17,83 @@ import selectors
 import struct
 import sys
 
-log = logging.getLogger("schmextender")
+class Tunnel(object):
+    def __init__(self, hostname, port):
+        self.log = logging.getLogger("schmextender")
+        self.more_remote = 0
+        self.hostname = hostname
+        self.port = port
 
+    def gotLocalData(self, data):
+        # Prepend the length field and send to the server
+        self.log.debug("Local: %d B" % len(data))
+        lenstr = struct.pack("!I", len(data))
+        sendlen = self.conn.send(lenstr + data)
+        if sendlen != len(data) + 4:
+            self.log.error("Sent too little to server")
 
-def gotLocalData(data):
-    global conn
-    # Prepend the length field and send to the server
-    log.debug("Local: %d B" % len(data))
-    lenstr = struct.pack("!I", len(data))
-    sendlen = conn.send(lenstr + data)
-    if sendlen != len(data) + 4:
-        log.error("Sent too little to server")
+    def gotRemoteData(self, data):
+        if self.more_remote > 0:
+            sys.stdout.buffer.write(data[:self.more_remote])
+            self.more_remote -= len(data[:self.more_remote])
+        while len(data) > 0:
+            lenfield = struct.unpack("!I", data[0:4])[0]
+            self.log.debug("Remote %d B" % lenfield)
+            data = data[4:]
+            sendlen = sys.stdout.buffer.write(data[:lenfield])
+            if sendlen != len(data[:lenfield]):
+                self.log.error("Sent too little on stdout")
+            self.more_remote = lenfield - len(data)
+            data = data[lenfield:]
+        if self.more_remote > 0:
+            self.log.debug("Waiting for %d B" % self.more_remote)
+        sys.stdout.flush()
 
-more = 0
-def gotRemoteData(data):
-    global more
-    if more > 0:
-        sys.stdout.buffer.write(data[:more])
-        more -= len(data[:more])
-    while len(data) > 0:
-        lenfield = struct.unpack("!I", data[0:4])[0]
-        log.debug("Remote %d B" % lenfield)
-        data = data[4:]
-        sendlen = sys.stdout.buffer.write(data[:lenfield])
-        if sendlen != len(data[:lenfield]):
-            log.error("Sent too little on stdout")
-        more = lenfield - len(data)
-        data = data[lenfield:]
-    if more > 0:
-        log.debug("Waiting for %d B" % more)
-    sys.stdout.flush()
+    def connect(self, auth, noverify=False):
+        context = ssl.create_default_context()
+        if noverify:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+    
+        self.conn = context.wrap_socket(socket.socket(socket.AF_INET),
+                                        server_hostname=self.hostname)
+        self.conn.connect((self.hostname, self.port))
+        self.log.info("Connected to %s:%d" % (self.hostname, self.port))
 
+        connectstr = "CONNECT localhost:0 HTTP/1.0\r\nX-SSLVPN-PROTOCOL: 2.0\r\nX-SSLVPN-SERVICE: NETEXTENDER\r\nProxy-Authorization:%s\r\nX-NX-Client-Platform: Linux\r\nConnection-Medium: MacOS\r\nUser-Agent: Dell SonicWALL NetExtender for Linux 8.1.787\r\nFrame-Encode: off\r\nX-NE-PROTOCOL: 2.0\r\n\r\n" % auth
+        self.conn.write(bytes(connectstr, "ascii"))
+        self.log.debug("Wrote: %s", connectstr)
+
+    def run(self):
+        # Set the socket and stdio non-blocking so we can react to data
+        # on either one of them
+        self.conn.setblocking(False)
+        fd = sys.stdin.fileno()
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+        # Let's shovel some data!
+        sel = selectors.DefaultSelector()
+        sel.register(self.conn, selectors.EVENT_READ)
+        sel.register(sys.stdin, selectors.EVENT_READ)
+
+        while True:
+            sel.select()
+
+            local = sys.stdin.buffer.read(1024)
+            while local is not None and len(local) > 0:
+                self.gotLocalData(local)
+                local = sys.stdin.buffer.read(1024)
+
+            try:
+                remote = self.conn.recv(4096)
+                while len(remote) > 0:
+                    self.gotRemoteData(remote)
+                    remote = self.conn.recv(4096)
+            except ssl.SSLWantReadError:
+                self.log.debug("Want read")
+
+        
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
@@ -64,7 +110,7 @@ if __name__ == "__main__":
     server = args.server[0]
 
     if args.debug:
-        log.setLevel('DEBUG')
+        logging.getLogger().setLevel('DEBUG')
 
     serversplit = server.split(":")
     hostname = serversplit[0]
@@ -73,44 +119,6 @@ if __name__ == "__main__":
     except IndexError:
         port = 443
 
-    context = ssl.create_default_context()
-    if args.noverify:
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-    
-    conn = context.wrap_socket(socket.socket(socket.AF_INET),
-                               server_hostname=hostname)
-    conn.connect((hostname, port))
-    log.info("Connected to %s:%d" % (hostname, port))
-
-    connectstr = "CONNECT localhost:0 HTTP/1.0\r\nX-SSLVPN-PROTOCOL: 2.0\r\nX-SSLVPN-SERVICE: NETEXTENDER\r\nProxy-Authorization:%s\r\nX-NX-Client-Platform: Linux\r\nConnection-Medium: MacOS\r\nUser-Agent: Dell SonicWALL NetExtender for Linux 8.1.787\r\nFrame-Encode: off\r\nX-NE-PROTOCOL: 2.0\r\n\r\n" % args.auth
-    conn.write(bytes(connectstr, "ascii"))
-    log.debug("Wrote: %s", connectstr)
-    
-    # Set the socket and stdio non-blocking so we can react to data
-    # on either one of them
-    conn.setblocking(False)
-    fd = sys.stdin.fileno()
-    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-    
-    # Let's shovel some data!
-    sel = selectors.DefaultSelector()
-    sel.register(conn, selectors.EVENT_READ)
-    sel.register(sys.stdin, selectors.EVENT_READ)
-
-    while True:
-        sel.select()
-
-        local = sys.stdin.buffer.read(1024)
-        while local is not None and len(local) > 0:
-            gotLocalData(local)
-            local = sys.stdin.buffer.read(1024)
-
-        try:
-            remote = conn.recv(4096)
-            while len(remote) > 0:
-                gotRemoteData(remote)
-                remote = conn.recv(4096)
-        except ssl.SSLWantReadError:
-            log.debug("Want read")
+    tunnel = Tunnel(hostname, port)
+    tunnel.connect(self.auth, noverify=args.noverify)
+    tunnel.run()

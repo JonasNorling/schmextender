@@ -11,6 +11,83 @@ import sys
 
 log = logging.getLogger("schmextender")
 
+class Login(object):
+    def __init__(self, hostname, port, username, password, domain, noverify=False):
+        self.log = logging.getLogger("schmextender")
+        self.hostname = hostname
+        self.port = port
+        self.username = username
+        self.password = password
+        self.domain = domain
+        self.noverify = noverify
+
+    def run(self):
+        server = "%s:%d" % (self.hostname, self.port)
+
+        # Using a session for all HTTPS requests in order to persist cookies   
+        s = requests.Session()
+        s.verify = not self.noverify
+    
+        # Must use a recognised user agent string, otherwise the server thinks
+        # it's an old unsupported client
+        s.headers.update({"User-Agent": "Dell SonicWALL NetExtender for Linux 8.1.787"})
+    
+        # Make a POST request with login information
+        # Content-Type: application/x-www-form-urlencoded
+        # User-Agent: Dell SonicWALL NetExtender for Linux 8.1.787
+        self.log.info("Posting login information to %s" % server)
+        loginform = { "username": self.username, "password": self.password,
+                      "domain": self.domain }
+        try:
+            r = s.post("https://%s/cgi-bin/userLogin" % server, data=loginform)
+        except requests.exceptions.SSLError as e:
+            self.log.fatal("SSL error (bad certificate?)")
+            self.log.info(e)
+            return None
+        except requests.exceptions.ConnectionError as e:
+            self.log.fatal("Connection error")
+            self.log.info(e)
+            return None
+        self.log.debug(r.status_code)
+        self.log.debug(r.text)
+        self.log.debug(r.headers)
+    
+        if "swap" in r.cookies:
+            self.log.debug("Swap cookie: %s", r.cookies["swap"])
+    
+        if r.status_code != 200 or "swap" not in r.cookies:
+            self.log.fatal("Bad status (%d) or cookie when posting login information", r.status_code)
+            self.log.info(r.text)
+            return None
+    
+        # The client would now do a
+        # GET /cgi-bin/sslvpnclient?epcversionquery=nxx HTTP/1.0
+        # We skip that here, because I don't know what it is.
+
+        # Make a GET request to receive some settings. We also get a new
+        # "swap" cookie with the key for the actual tunnel.
+        self.log.info("Getting settings")
+        r = s.get("https://%s/cgi-bin/sslvpnclient?launchplatform=mac&neProto=3&supportipv6=yes" % server, data=loginform)
+        self.log.debug(r.status_code)
+        self.log.debug(r.text)
+        self.log.debug(r.headers)
+
+        if "swap" in r.cookies:
+            self.log.info("Swap cookie: %s", r.cookies["swap"])
+
+        if r.status_code != 200:
+            self.log.fatal("Status %d when posting login information", r.status_code)
+            self.log.info(r.text)
+            return None
+
+        s.close()
+
+        # Finished!
+        self.log.info("Got authorization code")
+        self.log.debug("Now set up the tunnel using this authorization code: %s",
+                       r.cookies["swap"])
+
+        return r.cookies["swap"]
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -30,72 +107,19 @@ if __name__ == "__main__":
     server = args.server[0]
     
     if args.debug:
-        log.setLevel('DEBUG')
-    # Using a session for all HTTPS requests in order to persist cookies   
-    s = requests.Session()
-    s.verify = not args.noverify
-    
-    # Must use a recognised user agent string, otherwise the server thinks
-    # it's an old unsupported client
-    s.headers.update({"User-Agent": "Dell SonicWALL NetExtender for Linux 8.1.787"})
-    
-    # Make a POST request with login information
-    # Content-Type: application/x-www-form-urlencoded
-    # User-Agent: Dell SonicWALL NetExtender for Linux 8.1.787
-    log.info("--------------------------------------")
-    log.info("Posting login information to %s" % server)
-    loginform = { "username": args.username, "password": args.password,
-                 "domain": args.domain }
+        logging.getLogger().setLevel('DEBUG')
+
+    serversplit = server.split(":")
+    hostname = serversplit[0]
     try:
-        r = s.post("https://%s/cgi-bin/userLogin" % server, data=loginform)
-    except requests.exceptions.SSLError as e:
-        log.fatal("SSL error (bad certificate?)")
-        log.info(e)
-        sys.exit(1)
-    except requests.exceptions.ConnectionError as e:
-        log.fatal("Connection error")
-        log.info(e)
-        sys.exit(1)
-    log.debug(r.status_code)
-    log.debug(r.text)
-    log.debug(r.headers)
-    
-    if "swap" in r.cookies:
-        log.info("Swap cookie: %s", r.cookies["swap"])
-    
-    if r.status_code != 200 or "swap" not in r.cookies:
-        log.fatal("Bad status (%d) or cookie when posting login information", r.status_code)
-        log.info(r.text)
-        sys.exit(1)
-    
-    # The client would now do a
-    # GET /cgi-bin/sslvpnclient?epcversionquery=nxx HTTP/1.0
-    # We skip that here, because I don't know what it is.
-    
-    # Make a GET request to receive some settings. We also get a new
-    # "swap" cookie with the key for the actual tunnel.
-    log.info("--------------------------------------")
-    log.info("Getting settings")
-    r = s.get("https://%s/cgi-bin/sslvpnclient?launchplatform=mac&neProto=3&supportipv6=yes" % server, data=loginform)
-    log.debug(r.status_code)
-    log.debug(r.text)
-    log.debug(r.headers)
-    
-    if "swap" in r.cookies:
-        log.info("Swap cookie: %s", r.cookies["swap"])
-    
-    if r.status_code != 200:
-        log.fatal("Status %d when posting login information", r.status_code)
-        log.info(r.text)
-        exit
+        port = int(serversplit[1])
+    except IndexError:
+        port = 443
 
-    s.close()
+    login = Login(hostname, port, args.username, args.password, args.domain,
+                  noverify=args.noverify)
+    auth = login.run()
+    if auth is None:
+        sys.exit(-1)
 
-    # Finished!
-    log.info("--------------------------------------")
-    log.info("Now set up the tunnel using this authorization code: %s",
-             r.cookies["swap"])
-    
-
-
-
+    print("Authorization code: %s" % auth)
