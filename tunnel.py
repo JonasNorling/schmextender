@@ -22,8 +22,35 @@ import sys
 log = logging.getLogger("schmextender")
 
 
+def gotLocalData(data):
+    global conn
+    # Prepend the length field and send to the server
+    log.debug("Local: %s" % data)
+    lenstr = struct.pack("!I", len(data))
+    sendlen = conn.send(lenstr + data)
+    if sendlen != len(data) + 4:
+        log.error("Sent too little to server")
+
+more = 0
+def gotRemoteData(data):
+    global more
+    if more > 0:
+        sys.stdout.buffer.write(data[:more])
+        more -= len(data[:more])
+    while len(data) > 0:
+        lenfield = struct.unpack("!I", data[0:4])[0]
+        log.debug("Remote %d B" % lenfield)
+        data = data[4:]
+        sendlen = sys.stdout.buffer.write(data[:lenfield])
+        if sendlen != len(data[:lenfield]):
+            log.error("Sent too little on stdout")
+        more = lenfield - len(data)
+        data = data[lenfield:]
+    if more > 0:
+        log.debug("Waiting for %d B" % more)
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser(description="NetExtender NetSchmextender")
     parser.add_argument(dest="server", nargs=1, metavar="SERVER[:PORT]",
@@ -32,8 +59,13 @@ if __name__ == "__main__":
                         help="Authorization code from login cookie")
     parser.add_argument("--noverify", default=False, action="store_true",
                         help="Do not check TLS certificates")
+    parser.add_argument("--debug", default=False, action="store_true",
+                        help="Enable debug printouts")
     args = parser.parse_args()
     server = args.server[0]
+
+    if args.debug:
+        log.setLevel('DEBUG')
 
     serversplit = server.split(":")
     hostname = serversplit[0]
@@ -67,28 +99,18 @@ if __name__ == "__main__":
     sel = selectors.DefaultSelector()
     sel.register(conn, selectors.EVENT_READ)
     sel.register(sys.stdin, selectors.EVENT_READ)
-    
+
     while True:
         events = sel.select()
         local = sys.stdin.buffer.read(1500)
         remote = b''
         try:
-            remote = conn.recv(1500)
+            remote = conn.recv(4096)
         except ssl.SSLWantReadError:
             log.debug("Want read")
         
         if local is not None and len(local) > 0:
-            log.debug("Local: %s" % local)
-            lenstr = struct.pack("!I", len(local))
-            sendlen = conn.send(lenstr + local)
-            if sendlen != len(local) + 4:
-                log.error("Sent too little")
+            gotLocalData(local)
         
         if len(remote) > 0:
-            # FIXME: Handle length, split packets
-            remotelen = struct.unpack("!I", remote[0:4])[0]
-            log.debug("Remote %dB: %s" % (remotelen, remote[4:]))
-            sendlen = sys.stdout.buffer.write(remote[4:])
-            if sendlen != remotelen:
-                log.error("Send to little on stdout")
-            
+            gotRemoteData(remote)
