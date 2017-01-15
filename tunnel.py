@@ -1,12 +1,10 @@
-#!/usr/bin/python3 -u
+#!/usr/bin/python3
 #
 # This implements the PPP forwarding part of the SonicWALL NetExtender
 # (Mobile Connect) protocol.
 #
 # This script establishes a TLS connection and shovels data between the
 # server and stdio. Use with pppd pty <script>
-#
-# Note: we're running with -u for unbuffered I/O. FIXME: Solve in code.
 #
 
 import argparse
@@ -25,7 +23,7 @@ log = logging.getLogger("schmextender")
 def gotLocalData(data):
     global conn
     # Prepend the length field and send to the server
-    log.debug("Local: %s" % data)
+    log.debug("Local: %d B" % len(data))
     lenstr = struct.pack("!I", len(data))
     sendlen = conn.send(lenstr + data)
     if sendlen != len(data) + 4:
@@ -48,6 +46,7 @@ def gotRemoteData(data):
         data = data[lenfield:]
     if more > 0:
         log.debug("Waiting for %d B" % more)
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -101,16 +100,17 @@ if __name__ == "__main__":
     sel.register(sys.stdin, selectors.EVENT_READ)
 
     while True:
-        events = sel.select()
-        local = sys.stdin.buffer.read(1500)
-        remote = b''
+        sel.select()
+
+        local = sys.stdin.buffer.read(1024)
+        while local is not None and len(local) > 0:
+            gotLocalData(local)
+            local = sys.stdin.buffer.read(1024)
+
         try:
             remote = conn.recv(4096)
+            while len(remote) > 0:
+                gotRemoteData(remote)
+                remote = conn.recv(4096)
         except ssl.SSLWantReadError:
             log.debug("Want read")
-        
-        if local is not None and len(local) > 0:
-            gotLocalData(local)
-        
-        if len(remote) > 0:
-            gotRemoteData(remote)
