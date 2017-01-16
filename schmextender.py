@@ -10,6 +10,7 @@ import argparse
 import logging
 from login import Login
 from tunnel import Tunnel
+import sys
 
 log = logging.getLogger("schmextender")
 
