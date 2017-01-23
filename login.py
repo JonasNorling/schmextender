@@ -8,6 +8,7 @@ import argparse
 import logging
 import requests
 import sys
+import re
 
 log = logging.getLogger("schmextender")
 
@@ -82,12 +83,17 @@ class Login(object):
 
         s.close()
 
+        # Parse the response
+        res = {}
+        for x in re.findall('^([a-zA-Z.]+) = ?"?([^"\n;]*)"?;?$', r.text, re.M):
+            res.setdefault(x[0], []).append(x[1])
+
         # Finished!
         self.log.info("Got authorization code")
         self.log.debug("Now set up the tunnel using this authorization code: %s",
                        r.cookies["swap"])
 
-        return r.cookies["swap"]
+        return (r.cookies["swap"], res)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -122,4 +128,4 @@ if __name__ == "__main__":
     if auth is None:
         sys.exit(-1)
 
-    print("Authorization code: %s" % auth)
+    print("Authorization code: %s" % auth[0])

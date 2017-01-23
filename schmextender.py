@@ -48,5 +48,5 @@ if __name__ == "__main__":
         sys.exit(-1)
 
     tunnel = Tunnel(hostname, port)
-    tunnel.connect(auth, noverify=args.noverify)
+    tunnel.connect(auth[0], noverify=args.noverify)
     tunnel.run()
