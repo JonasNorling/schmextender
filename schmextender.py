@@ -11,8 +11,32 @@ import logging
 from login import Login
 from tunnel import Tunnel
 import sys
+import subprocess
+import _thread
+import time
 
 log = logging.getLogger("schmextender")
+
+# Prepare the interface by adding routes
+# This is something that is usually done in the ppp ip-up script
+def prepare_interface(name, data):
+    # Try for a few seconds
+    up = False
+    for _ in range(6):
+        try:
+            if subprocess.check_output(["/usr/sbin/ip", "link", "show", "up", "dev", name], stderr=sys.stderr):
+                up = True
+                break
+        except CalledProcessError:
+            pass
+        time.sleep(0.5)
+
+    if not up:
+        return
+
+    for r in data.setdefault("Route", []):
+        log.info("Adding route to %s", r)
+        subprocess.call(["/usr/sbin/ip", "route", "add", r, "dev", name], stdout=sys.stderr, stderr=sys.stderr)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -47,6 +71,9 @@ if __name__ == "__main__":
     if auth is None:
         sys.exit(-1)
 
+    log.warning("Assuming ppp0 interface");
+    _thread.start_new_thread(prepare_interface, ("ppp0", auth[1]))
+
     tunnel = Tunnel(hostname, port)
-    tunnel.connect(auth, noverify=args.noverify)
+    tunnel.connect(auth[0], noverify=args.noverify)
     tunnel.run()
