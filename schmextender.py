@@ -49,6 +49,9 @@ def prepare_interface(name, data):
         log.info("Adding IPv6 route to %s", r)
         subprocess.call(["/usr/sbin/ip", "route", "add", r, "dev", name], stdout=sys.stderr, stderr=sys.stderr)
 
+    if data["TunnelAllMode"][0] == "1":
+        log.info("Server asked us to add a default route...")
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
