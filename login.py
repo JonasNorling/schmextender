@@ -85,7 +85,7 @@ class Login(object):
 
         # Parse the response
         res = {}
-        for x in re.findall('^([a-zA-Z.]+) = ?"?([^"\n;]*)"?;?$', r.text, re.M):
+        for x in re.findall('^([a-zA-Z0-9.]+) = ?"?([^"\n;]*)"?;?$', r.text, re.M):
             res.setdefault(x[0], []).append(x[1])
 
         # Finished!
