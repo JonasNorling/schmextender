@@ -9,3 +9,11 @@ novj
 nopcomp
 noaccomp
 ipparam netExtender
+
+# The following options are provided by NetExtender client on the command line
+# to pppd. Since schmextender doesn't call pppd but rather the other way
+# around, these options are provided in this file instead.
++ipv6
+# Make room for the TLS overhead
+mtu 1280
+mru 1280
