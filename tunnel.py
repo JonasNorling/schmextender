@@ -47,7 +47,6 @@ class Tunnel(object):
             data = data[lenfield:]
         if self.more_remote > 0:
             self.log.debug("Waiting for %d B" % self.more_remote)
-        sys.stdout.flush()
 
     def connect(self, auth, noverify=False):
         context = ssl.create_default_context()
@@ -86,14 +85,18 @@ class Tunnel(object):
                 local = sys.stdin.buffer.read(1024)
 
             try:
+                # This should be a no-op in most cases
+                sys.stdout.flush()
                 remote = self.conn.recv(4096)
                 while len(remote) > 0:
                     self.gotRemoteData(remote)
+                    sys.stdout.flush()
                     remote = self.conn.recv(4096)
             except ssl.SSLWantReadError:
                 self.log.debug("Want read")
+            except BlockingIOError:
+                self.log.debug("Would block")
 
-        
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
