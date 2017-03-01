@@ -10,7 +10,6 @@ sudo pppd nodetach file ppp_conf pty "./schmextender.py --username USERNAME --pa
 
 
 ## Limitation
-- Issue with blocking write, sometimes it casues an exception.
 - No keep alive, if the client is to slient, the connection will be closed.
 - Doesn't install defualt routes if asked by the server
 - Doesn't install DNS related information, such as resolvers and search domains.
