@@ -11,11 +11,12 @@ import logging
 from login import Login
 from tunnel import Tunnel
 import sys
-import subprocess
 import _thread
 import time
+import libip
 
 log = logging.getLogger("schmextender")
+ip = libip.get_impl()
 
 # Prepare the interface by adding routes
 # This is something that is usually done in the ppp ip-up script
@@ -23,12 +24,9 @@ def prepare_interface(name, data):
     # Try for a few seconds
     up = False
     for _ in range(6):
-        try:
-            if subprocess.check_output(["/usr/sbin/ip", "link", "show", "up", "dev", name], stderr=sys.stderr):
-                up = True
-                break
-        except CalledProcessError:
-            pass
+        if ip.is_link_up(name):
+            up = True
+            break
         time.sleep(0.5)
 
     if not up:
@@ -36,25 +34,25 @@ def prepare_interface(name, data):
 
     for r in data.setdefault("Route", []):
         log.info("Adding route to %s", r)
-        subprocess.call(["/usr/sbin/ip", "route", "add", r, "dev", name], stdout=sys.stderr, stderr=sys.stderr)
+        ip.add_route(r, name)
 
     for a in data.setdefault("GlobalIPv6Addr", []):
         log.info("Adding IPv6 address %s", a)
-        subprocess.call(["/usr/sbin/ip", "address", "add", a, "dev", name], stdout=sys.stderr, stderr=sys.stderr)
+        ip.add_address6(a, name)
 
     for r in data.setdefault("Ipv6Route", []):
         if r == "::/64":
             log.info("Ignoring IPv6 route %s", r)
             continue
         log.info("Adding IPv6 route to %s", r)
-        subprocess.call(["/usr/sbin/ip", "route", "add", r, "dev", name], stdout=sys.stderr, stderr=sys.stderr)
+        ip.add_route6(r, name)
 
     if data["TunnelAllMode"][0] == "1":
         log.info("Server asked us to add a default route...")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    
+
     parser = argparse.ArgumentParser(description="NetExtender NetSchmextender")
     parser.add_argument(dest="server", nargs=1, metavar="SERVER[:PORT]",
                         help="Server and port")
@@ -68,7 +66,7 @@ if __name__ == "__main__":
                         help="Enable debug printouts")
     args = parser.parse_args()
     server = args.server[0]
-    
+
     if args.debug:
         logging.getLogger().setLevel('DEBUG')
 
